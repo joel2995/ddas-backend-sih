@@ -26,7 +26,6 @@ def create_shared_directory():
         # Command to share the folder with full access for everyone
         share_command = f'net share SharedDatasets={SHARED_DIRECTORY} /grant:everyone,full'
         try:
-            # Execute the command to share the folder
             subprocess.run(share_command, shell=True, check=True)
             print("Shared folder created and shared successfully.")
         except subprocess.CalledProcessError as e:
@@ -140,59 +139,10 @@ def download_dataset(filename):
         existing_record = download_collection.find_one({'file_hash': file_hash})
 
         if existing_record:
-            # If filename differs but content is the same, update the record
-            if existing_record['filename'] != filename:
-                update_result = download_collection.update_one(
-                    {'_id': existing_record['_id']},
-                    {'$set': {'filename': filename, 'dataset_path': shared_file_path}}
-                )
-                
-                if update_result.modified_count > 0:
-                    return jsonify({
-                        "message": "Filename changed but content is the same.",
-                        "status": "filename_changed",
-                        "user_details": {
-                            'client_ip': existing_record['client_ip'],
-                            'download_time': existing_record.get('download_time', 'N/A'),
-                            'dataset_path': shared_file_path
-                        }
-                    }), 409
-                else:
-                    return jsonify({'error': 'Failed to update the filename in the database.'}), 500
-
-            # If filename and content are the same
-            if existing_record['filename'] == filename:
-                return jsonify({
-                    "message": "Exact match: This dataset has already been processed.",
-                    "status": "exact_match",
-                    "user_details": {
-                        'client_ip': existing_record['client_ip'],
-                        'download_time': existing_record.get('download_time', 'N/A'),
-                        'dataset_path': shared_file_path
-                    }
-                }), 409
-
-        # Check for different name, same content
-        diff_name_same_content = download_collection.find_one({
-            'file_hash': file_hash,
-            'filename': {'$ne': filename}
-        })
-
-        if diff_name_same_content:
-            # Update the old file record with the new filename and path
-            download_collection.update_one(
-                {'_id': diff_name_same_content['_id']},
-                {'$set': {'filename': filename, 'dataset_path': shared_file_path}}
-            )
-
             return jsonify({
-                "message": "Different name, same content: A file with the same content but a different name exists.",
-                "status": "diff_name_same_content",
-                "user_details": {
-                    'client_ip': diff_name_same_content['client_ip'],
-                    'download_time': diff_name_same_content.get('download_time', 'N/A'),
-                    'dataset_path': shared_file_path
-                }
+                "message": "This dataset has already been processed.",
+                "status": "already_downloaded",
+                "details": existing_record
             }), 409
 
         # Copy dataset from the admin directory to the shared directory
@@ -207,39 +157,30 @@ def download_dataset(filename):
             'dataset_path': shared_file_path
         })
 
-        try:
-            # Serve the file from the shared directory directly
-            return send_file(shared_file_path, as_attachment=True)
-        except Exception as e:
-            return jsonify({'error': f'Failed to send file: {str(e)}'}), 500
+        return send_file(shared_file_path, as_attachment=True)
 
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
 
 class FileRenameHandler(FileSystemEventHandler):
-    def on_modified(self, event):
+    def on_moved(self, event):
         if event.is_directory:
             return
 
-        # When a file is renamed, we need to check the new filename
-        if event.event_type == 'moved':
-            new_filename = os.path.basename(event.dest_path)
-            old_filename = os.path.basename(event.src_path)
+        # Handle renamed files
+        old_filename = os.path.basename(event.src_path)
+        new_filename = os.path.basename(event.dest_path)
 
-            # Update the database record for the old filename
-            old_file_path = os.path.join(SHARED_DIRECTORY, old_filename)
-            new_file_path = os.path.join(SHARED_DIRECTORY, new_filename)
+        old_file_path = os.path.join(SHARED_DIRECTORY, old_filename)
+        new_file_path = os.path.join(SHARED_DIRECTORY, new_filename)
 
-            if os.path.exists(old_file_path):
-                # Calculate hash for the renamed file
-                file_hash = calculate_file_hash(old_file_path)
-                download_collection.update_one(
-                    {'filename': old_filename},
-                    {'$set': {'filename': new_filename, 'dataset_path': new_file_path, 'file_hash': file_hash}}
-                )
-                # Rename the file on disk
-                os.rename(old_file_path, new_file_path)
+        if os.path.exists(new_file_path):
+            file_hash = calculate_file_hash(new_file_path)
+            download_collection.update_one(
+                {'filename': old_filename},
+                {'$set': {'filename': new_filename, 'file_hash': file_hash, 'dataset_path': new_file_path}}
+            )
 
 def start_file_observer():
     event_handler = FileRenameHandler()
@@ -255,6 +196,5 @@ def start_file_observer():
 
 if __name__ == '__main__':
     create_shared_directory()
-    thread = threading.Thread(target=start_file_observer)
-    thread.start()
-    app.run(host='192.168.74.42',debug=True, port=5000)
+    threading.Thread(target=start_file_observer, daemon=True).start()
+    app.run(host='192.168.0.114', port=5000, debug=True)

@@ -2,7 +2,7 @@ import requests
 import os
 
 # Configuration
-SERVER_URL = 'http://192.168.1.3:5000'  # Replace with your server's IP address
+SERVER_URL = 'http://192.168.0.114:5000'  # Replace with your server's IP address
 CLIENT_ID = 'client1'  # Example client ID
 NETWORK_SHARED_DIR = r'\\ 192.168.1.3\SharedDatasets'  # Replace with your server's IP address
 
@@ -20,7 +20,7 @@ def list_datasets():
         for dataset in datasets:
             print(dataset)
     except requests.exceptions.RequestException as e:
-        print(f'Failed to fetch datasets: {e}')
+        print(f'Failed to fetch datasets: {Ellipsis}')
 
 def check_dataset(filename):
     try:
